@@ -1,6 +1,36 @@
 document.addEventListener('DOMContentLoaded', () => {
     const cells = document.querySelectorAll('.sudoku-cell');
     const inputButtons = document.querySelectorAll('.sudoku-input-button');
+    const hintBtn = document.querySelector('[data-control-btn="hint"]');
+    const notesBtn = document.querySelector('[data-control-btn="notes"]');
+
+    let notesMode = false;
+    let hintMode = false;
+
+    function toggleControl(btn, type) {
+        if (type === 'hint') {
+            hintMode = !hintMode;
+            updateControlUI(btn, hintMode);
+        } else if (type === 'notes') {
+            notesMode = !notesMode;
+            updateControlUI(btn, notesMode);
+        }
+    }
+
+    function updateControlUI(btn, isActive) {
+        const span = btn.querySelector('span');
+        if (!span) return;
+
+        if (isActive) {
+            span.classList.remove('sudoku-under-board__text--disabled');
+            span.classList.add('sudoku-under-board__text--active');
+            span.textContent = 'ON';
+        } else {
+            span.classList.remove('sudoku-under-board__text--active');
+            span.classList.add('sudoku-under-board__text--disabled');
+            span.textContent = 'OFF';
+        }
+    }
 
     function updateHighlights(activeCell) {
         if (!activeCell) return;
@@ -22,10 +52,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const cRow = Math.floor(cIndex / 6);
             const cCol = cIndex % 6;
-            const cValue = c.querySelector('.sudoku-cell-content').textContent.trim();
+
+            // For contextual highlighting, we only care about the main value
+            // Notes don't usually trigger "same value" highlighting unless LinkedIn does it.
+            // Let's assume only main values trigger it.
+            const contentDiv = c.querySelector('.sudoku-cell-content');
+            const cHasNotes = contentDiv.querySelector('.sudoku-cell-notes');
+            const cValue = cHasNotes ? '' : contentDiv.textContent.trim();
 
             // Highlight same value
-            if (value !== '' && cValue === value) {
+            if (value !== '' && !activeCell.querySelector('.sudoku-cell-notes') && cValue === value) {
                 c.classList.add('sudoku-cell-contextual');
             }
 
@@ -51,13 +87,40 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const contentDiv = activeCell.querySelector('.sudoku-cell-content');
+
         if (inputValue === 'erase') {
-            contentDiv.textContent = '';
+            contentDiv.innerHTML = '';
+            updateHighlights(activeCell);
+            return;
+        }
+
+        if (notesMode) {
+            let notesContainer = contentDiv.querySelector('.sudoku-cell-notes');
+            if (!notesContainer) {
+                contentDiv.innerHTML = '<div class="sudoku-cell-notes"></div>';
+                notesContainer = contentDiv.querySelector('.sudoku-cell-notes');
+                // Initialize 6 slots
+                for (let i = 1; i <= 6; i++) {
+                    const noteSlot = document.createElement('div');
+                    noteSlot.className = 'sudoku-cell-note sudoku-cell-note-color';
+                    noteSlot.setAttribute('data-note-val', i);
+                    notesContainer.appendChild(noteSlot);
+                }
+            }
+
+            const slot = notesContainer.querySelector(`[data-note-val="${inputValue}"]`);
+            if (slot.textContent === inputValue) {
+                slot.textContent = ''; // Toggle off
+            } else {
+                slot.textContent = inputValue; // Toggle on
+            }
         } else {
+            // Normal mode
+            contentDiv.innerHTML = '';
             contentDiv.textContent = inputValue;
         }
 
-        // Update highlights after value change (e.g., same-value highlighting)
+        // Update highlights after value change
         updateHighlights(activeCell);
     }
 
@@ -76,14 +139,23 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    if (hintBtn) {
+        hintBtn.addEventListener('click', () => toggleControl(hintBtn, 'hint'));
+    }
+
+    if (notesBtn) {
+        notesBtn.addEventListener('click', () => toggleControl(notesBtn, 'notes'));
+    }
+
     document.addEventListener('keydown', (event) => {
-        // Handle numbers 1-6
         if (event.key >= '1' && event.key <= '6') {
             handleInput(event.key);
-        }
-        // Handle Backspace or Delete for erasing
-        else if (event.key === 'Backspace' || event.key === 'Delete') {
+        } else if (event.key === 'Backspace' || event.key === 'Delete') {
             handleInput('erase');
+        } else if (event.key.toLowerCase() === 'n') {
+            if (notesBtn) toggleControl(notesBtn, 'notes');
+        } else if (event.key.toLowerCase() === 'h') {
+            if (hintBtn) toggleControl(hintBtn, 'hint');
         }
     });
 });
