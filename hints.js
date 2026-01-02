@@ -1,10 +1,9 @@
 /**
  * hints.js - Script for automatic note filling (Auto-Notes)
- * Implements Sudoku rules, candidate elimination, and 2-pass Hidden Single logic.
+ * Implements Sudoku rules, candidate elimination, and 2-pass Hidden Single logic with granular visual delays.
  */
 
 const SudokuRules = {
-    // Basic checks against fixed numbers on the board
     checkRow: (num, row, board) => {
         for (let c = 0; c < 6; c++) {
             if (board[row * 6 + c] === num) return false;
@@ -29,15 +28,30 @@ const SudokuRules = {
     }
 };
 
-/**
- * Elimination Pass:
- * If a cell has only 1 possible variant, remove that variant from all 
- * other cells in the same row, column, and region.
- */
-function applyElimination(cellCandidates) {
-    let changed = false;
-    const next = cellCandidates.map(c => [...c]);
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+function renderCandidates(cellCandidates, cells, board) {
+    cells.forEach((cell, index) => {
+        const candidates = cellCandidates[index];
+        if (candidates.length === 0 && (cell.classList.contains('sudoku-cell-prefilled') || board[index] !== 0)) return;
+
+        const contentDiv = cell.querySelector('.sudoku-cell-content');
+        let notesHtml = '<div class="sudoku-cell-notes">';
+        for (let i = 1; i <= 6; i++) {
+            const valToDisplay = candidates.includes(i) ? i : '';
+            notesHtml += `<div class="sudoku-cell-note sudoku-cell-note-color" data-note-val="${i}">${valToDisplay}</div>`;
+        }
+        notesHtml += '</div>';
+        contentDiv.innerHTML = notesHtml;
+    });
+}
+
+/**
+ * Granular Elimination:
+ * Wipes candidates cell-by-cell when a fixed number is found.
+ */
+async function applyEliminationGranular(cellCandidates, cells, board) {
+    const next = cellCandidates.map(c => [...c]);
     for (let i = 0; i < 36; i++) {
         if (next[i].length === 1) {
             const fixed = next[i][0];
@@ -46,18 +60,19 @@ function applyElimination(cellCandidates) {
             const rStart = Math.floor(row / 2) * 2;
             const cStart = Math.floor(col / 3) * 3;
 
+            let changedLocally = false;
             for (let k = 0; k < 6; k++) {
                 // Row
                 const rIdx = row * 6 + k;
                 if (rIdx !== i && next[rIdx].includes(fixed)) {
                     next[rIdx] = next[rIdx].filter(n => n !== fixed);
-                    changed = true;
+                    changedLocally = true;
                 }
                 // Col
                 const cIdx = k * 6 + col;
                 if (cIdx !== i && next[cIdx].includes(fixed)) {
                     next[cIdx] = next[cIdx].filter(n => n !== fixed);
-                    changed = true;
+                    changedLocally = true;
                 }
             }
             // Region
@@ -66,23 +81,26 @@ function applyElimination(cellCandidates) {
                     const regIdx = r * 6 + c;
                     if (regIdx !== i && next[regIdx].includes(fixed)) {
                         next[regIdx] = next[regIdx].filter(n => n !== fixed);
-                        changed = true;
+                        changedLocally = true;
                     }
                 }
             }
+
+            if (changedLocally) {
+                renderCandidates(next, cells, board);
+                await delay(500);
+            }
         }
     }
-    return { candidates: next, changed };
+    return next;
 }
 
 /**
- * Hidden Single Pass:
- * Checks if a candidate is unique among the "possible options" for its module.
+ * Granular Hidden Single:
+ * Checks uniqueness cell-by-cell.
  */
-function applyHiddenSingle(cellCandidates) {
-    let changed = false;
+async function applyHiddenSingleGranular(cellCandidates, cells, board) {
     const next = cellCandidates.map(c => [...c]);
-
     for (let i = 0; i < 36; i++) {
         if (next[i].length <= 1) continue;
 
@@ -110,18 +128,19 @@ function applyHiddenSingle(cellCandidates) {
 
             if (uniqueInRow || uniqueInCol || uniqueInRegion) {
                 next[i] = [num];
-                changed = true;
+                renderCandidates(next, cells, board);
+                await delay(500);
                 break;
             }
         }
     }
-    return { candidates: next, changed };
+    return next;
 }
 
-window.triggerHints = function () {
+window.triggerHints = async function () {
     const cells = document.querySelectorAll('.sudoku-cell');
 
-    // 1. Initial status
+    // 1. Snapshot board
     const board = Array.from(cells).map(cell => {
         const content = cell.querySelector('.sudoku-cell-content');
         if (content.querySelector('.sudoku-cell-notes')) return 0;
@@ -129,9 +148,13 @@ window.triggerHints = function () {
         return isNaN(val) ? 0 : val;
     });
 
-    // 2. Generate initial candidates
-    let cellCandidates = new Array(36).fill(null).map((_, i) => {
-        if (cells[i].classList.contains('sudoku-cell-prefilled') || board[i] !== 0) return [];
+    // 2. Initial candidates - Cell by cell
+    let cellCandidates = new Array(36).fill([]);
+    for (let i = 0; i < 36; i++) {
+        if (cells[i].classList.contains('sudoku-cell-prefilled') || board[i] !== 0) {
+            continue;
+        }
+
         const row = Math.floor(i / 6);
         const col = i % 6;
         const possible = [];
@@ -142,32 +165,18 @@ window.triggerHints = function () {
                 possible.push(num);
             }
         }
-        return possible;
-    });
+        cellCandidates[i] = possible;
+        renderCandidates(cellCandidates, cells, board);
+        await delay(200); // Faster for initial fill
+    }
 
     // --- PASS 1 ---
-    cellCandidates = applyElimination(cellCandidates).candidates;
-    cellCandidates = applyHiddenSingle(cellCandidates).candidates;
+    cellCandidates = await applyEliminationGranular(cellCandidates, cells, board);
+    cellCandidates = await applyHiddenSingleGranular(cellCandidates, cells, board);
 
     // --- PASS 2 ---
-    // The second pass now works "among possible options" refined by the first pass
-    cellCandidates = applyElimination(cellCandidates).candidates;
-    cellCandidates = applyHiddenSingle(cellCandidates).candidates;
+    cellCandidates = await applyEliminationGranular(cellCandidates, cells, board);
+    cellCandidates = await applyHiddenSingleGranular(cellCandidates, cells, board);
 
-    // 5. Update DOM
-    cells.forEach((cell, index) => {
-        const candidates = cellCandidates[index];
-        if (candidates.length === 0 && (cell.classList.contains('sudoku-cell-prefilled') || board[index] !== 0)) return;
-
-        const contentDiv = cell.querySelector('.sudoku-cell-content');
-        let notesHtml = '<div class="sudoku-cell-notes">';
-        for (let i = 1; i <= 6; i++) {
-            const valToDisplay = candidates.includes(i) ? i : '';
-            notesHtml += `<div class="sudoku-cell-note sudoku-cell-note-color" data-note-val="${i}">${valToDisplay}</div>`;
-        }
-        notesHtml += '</div>';
-        contentDiv.innerHTML = notesHtml;
-    });
-
-    console.log("Strategic Double-Pass Hints triggered: Candidate check including 'possible variants' chain.");
+    console.log("Strategic Granular Hints completed.");
 };
