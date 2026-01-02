@@ -1,10 +1,10 @@
 /**
  * hints.js - Script for automatic note filling (Auto-Notes)
- * Implements Sudoku rules and Hidden Single logic.
+ * Implements Sudoku rules, candidate elimination, and 2-pass Hidden Single logic.
  */
 
 const SudokuRules = {
-    // Basic candidate checks
+    // Basic checks against fixed numbers on the board
     checkRow: (num, row, board) => {
         for (let c = 0; c < 6; c++) {
             if (board[row * 6 + c] === num) return false;
@@ -29,10 +29,99 @@ const SudokuRules = {
     }
 };
 
+/**
+ * Elimination Pass:
+ * If a cell has only 1 possible variant, remove that variant from all 
+ * other cells in the same row, column, and region.
+ */
+function applyElimination(cellCandidates) {
+    let changed = false;
+    const next = cellCandidates.map(c => [...c]);
+
+    for (let i = 0; i < 36; i++) {
+        if (next[i].length === 1) {
+            const fixed = next[i][0];
+            const row = Math.floor(i / 6);
+            const col = i % 6;
+            const rStart = Math.floor(row / 2) * 2;
+            const cStart = Math.floor(col / 3) * 3;
+
+            for (let k = 0; k < 6; k++) {
+                // Row
+                const rIdx = row * 6 + k;
+                if (rIdx !== i && next[rIdx].includes(fixed)) {
+                    next[rIdx] = next[rIdx].filter(n => n !== fixed);
+                    changed = true;
+                }
+                // Col
+                const cIdx = k * 6 + col;
+                if (cIdx !== i && next[cIdx].includes(fixed)) {
+                    next[cIdx] = next[cIdx].filter(n => n !== fixed);
+                    changed = true;
+                }
+            }
+            // Region
+            for (let r = rStart; r < rStart + 2; r++) {
+                for (let c = cStart; c < cStart + 3; c++) {
+                    const regIdx = r * 6 + c;
+                    if (regIdx !== i && next[regIdx].includes(fixed)) {
+                        next[regIdx] = next[regIdx].filter(n => n !== fixed);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    return { candidates: next, changed };
+}
+
+/**
+ * Hidden Single Pass:
+ * Checks if a candidate is unique among the "possible options" for its module.
+ */
+function applyHiddenSingle(cellCandidates) {
+    let changed = false;
+    const next = cellCandidates.map(c => [...c]);
+
+    for (let i = 0; i < 36; i++) {
+        if (next[i].length <= 1) continue;
+
+        const row = Math.floor(i / 6);
+        const col = i % 6;
+        const rStart = Math.floor(row / 2) * 2;
+        const cStart = Math.floor(col / 3) * 3;
+
+        for (const num of next[i]) {
+            let uniqueInRow = true;
+            let uniqueInCol = true;
+            let uniqueInRegion = true;
+
+            for (let k = 0; k < 6; k++) {
+                if (uniqueInRow && row * 6 + k !== i && next[row * 6 + k].includes(num)) uniqueInRow = false;
+                if (uniqueInCol && k * 6 + col !== i && next[k * 6 + col].includes(num)) uniqueInCol = false;
+            }
+
+            for (let r = rStart; r < rStart + 2; r++) {
+                for (let c = cStart; c < cStart + 3; c++) {
+                    const regIdx = r * 6 + c;
+                    if (uniqueInRegion && regIdx !== i && next[regIdx].includes(num)) uniqueInRegion = false;
+                }
+            }
+
+            if (uniqueInRow || uniqueInCol || uniqueInRegion) {
+                next[i] = [num];
+                changed = true;
+                break;
+            }
+        }
+    }
+    return { candidates: next, changed };
+}
+
 window.triggerHints = function () {
     const cells = document.querySelectorAll('.sudoku-cell');
 
-    // 1. Snapshot board
+    // 1. Initial status
     const board = Array.from(cells).map(cell => {
         const content = cell.querySelector('.sudoku-cell-content');
         if (content.querySelector('.sudoku-cell-notes')) return 0;
@@ -40,10 +129,9 @@ window.triggerHints = function () {
         return isNaN(val) ? 0 : val;
     });
 
-    // 2. Find all possible candidates for each empty cell
-    const cellCandidates = new Array(36).fill(null).map((_, i) => {
+    // 2. Generate initial candidates
+    let cellCandidates = new Array(36).fill(null).map((_, i) => {
         if (cells[i].classList.contains('sudoku-cell-prefilled') || board[i] !== 0) return [];
-
         const row = Math.floor(i / 6);
         const col = i % 6;
         const possible = [];
@@ -57,50 +145,18 @@ window.triggerHints = function () {
         return possible;
     });
 
-    // 3. Apply Hidden Single Logic
-    // If a number is a candidate for ONLY ONE cell in a row/col/region, 
-    // then that cell must contain that number.
-    const refinedCandidates = cellCandidates.map((candidates, i) => {
-        if (candidates.length <= 1) return candidates; // Already unique or empty
+    // --- PASS 1 ---
+    cellCandidates = applyElimination(cellCandidates).candidates;
+    cellCandidates = applyHiddenSingle(cellCandidates).candidates;
 
-        const row = Math.floor(i / 6);
-        const col = i % 6;
-        const rStart = Math.floor(row / 2) * 2;
-        const cStart = Math.floor(col / 3) * 3;
+    // --- PASS 2 ---
+    // The second pass now works "among possible options" refined by the first pass
+    cellCandidates = applyElimination(cellCandidates).candidates;
+    cellCandidates = applyHiddenSingle(cellCandidates).candidates;
 
-        for (const num of candidates) {
-            let isUniqueInRow = true;
-            let isUniqueInCol = true;
-            let isUniqueInRegion = true;
-
-            for (let k = 0; k < 6; k++) {
-                // Check Row
-                const rIdx = row * 6 + k;
-                if (rIdx !== i && cellCandidates[rIdx].includes(num)) isUniqueInRow = false;
-
-                // Check Col
-                const cIdx = k * 6 + col;
-                if (cIdx !== i && cellCandidates[cIdx].includes(num)) isUniqueInCol = false;
-            }
-
-            // Check Region
-            for (let r = rStart; r < rStart + 2; r++) {
-                for (let c = cStart; c < cStart + 3; c++) {
-                    const regIdx = r * 6 + c;
-                    if (regIdx !== i && cellCandidates[regIdx].includes(num)) isUniqueInRegion = false;
-                }
-            }
-
-            if (isUniqueInRow || isUniqueInCol || isUniqueInRegion) {
-                return [num]; // Found a Hidden Single! Only this value is possible.
-            }
-        }
-        return candidates;
-    });
-
-    // 4. Update the DOM
+    // 5. Update DOM
     cells.forEach((cell, index) => {
-        const candidates = refinedCandidates[index];
+        const candidates = cellCandidates[index];
         if (candidates.length === 0 && (cell.classList.contains('sudoku-cell-prefilled') || board[index] !== 0)) return;
 
         const contentDiv = cell.querySelector('.sudoku-cell-content');
@@ -113,5 +169,5 @@ window.triggerHints = function () {
         contentDiv.innerHTML = notesHtml;
     });
 
-    console.log("Advanced Hints triggered: Candidates refined using Hidden Single logic.");
+    console.log("Strategic Double-Pass Hints triggered: Candidate check including 'possible variants' chain.");
 };
