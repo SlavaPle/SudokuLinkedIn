@@ -15,6 +15,13 @@ document.addEventListener('DOMContentLoaded', () => {
             notesMode = !notesMode;
             updateControlUI(btn, notesMode);
         }
+
+        // If both Hint and Notes are ON, trigger automatic hints calculation
+        if (hintMode && notesMode) {
+            if (typeof window.triggerHints === 'function') {
+                window.triggerHints();
+            }
+        }
     }
 
     function updateControlUI(btn, isActive) {
@@ -53,9 +60,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const cRow = Math.floor(cIndex / 6);
             const cCol = cIndex % 6;
 
-            // For contextual highlighting, we only care about the main value
-            // Notes don't usually trigger "same value" highlighting unless LinkedIn does it.
-            // Let's assume only main values trigger it.
             const contentDiv = c.querySelector('.sudoku-cell-content');
             const cHasNotes = contentDiv.querySelector('.sudoku-cell-notes');
             const cValue = cHasNotes ? '' : contentDiv.textContent.trim();
@@ -99,7 +103,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!notesContainer) {
                 contentDiv.innerHTML = '<div class="sudoku-cell-notes"></div>';
                 notesContainer = contentDiv.querySelector('.sudoku-cell-notes');
-                // Initialize 6 slots
                 for (let i = 1; i <= 6; i++) {
                     const noteSlot = document.createElement('div');
                     noteSlot.className = 'sudoku-cell-note sudoku-cell-note-color';
@@ -110,17 +113,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const slot = notesContainer.querySelector(`[data-note-val="${inputValue}"]`);
             if (slot.textContent === inputValue) {
-                slot.textContent = ''; // Toggle off
+                slot.textContent = '';
             } else {
-                slot.textContent = inputValue; // Toggle on
+                slot.textContent = inputValue;
             }
         } else {
-            // Normal mode
             contentDiv.innerHTML = '';
             contentDiv.textContent = inputValue;
         }
 
-        // Update highlights after value change
         updateHighlights(activeCell);
     }
 
